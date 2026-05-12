@@ -187,7 +187,7 @@ export default function Home() {
   const sorted = getSorted(results, sortBy).slice(0, maxResults);
   const bestPrice = results.length ? Math.min(...results.map((f) => f.pricePerPerson)) : null;
   const activePlatforms = results.length > 0
-    ? [...new Set(results.map((f) => f.source))].length
+    ? Array.from(new Set(results.map((f) => f.source))).length
     : PLATFORMS.filter((p) => p.defaultOn).length;
 
   return (
