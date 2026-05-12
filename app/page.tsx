@@ -4,218 +4,335 @@ import { useState, useRef, useCallback } from "react";
 import SearchForm from "@/components/SearchForm";
 import FlightCard from "@/components/FlightCard";
 import AgentStatus from "@/components/AgentStatus";
-import type { SearchParams, FlightResult } from "@/lib/types";
+import type { SearchParams, FlightResult, AgentStatus as TStatus, LogEntry, LogType } from "@/lib/types";
+import { PLATFORMS } from "@/lib/sources";
+
+const PLATFORM_LABEL: Record<string, string> = Object.fromEntries(PLATFORMS.map((p) => [p.key, p.label]));
+
+type ScanSource = { name: string; state: "idle" | "scanning" | "done" };
+
+function ts() {
+  return new Date().toLocaleTimeString("es-AR");
+}
 
 export default function Home() {
-  const [results, setResults] = useState<FlightResult[]>([]);
-  const [status, setStatus] = useState<"idle" | "running" | "done" | "error">("idle");
-  const [statusMsg, setStatusMsg] = useState("Configurá tu búsqueda y lanzá el agente");
-  const [totalScans, setTotalScans] = useState(0);
-  const abortRef = useRef<AbortController | null>(null);
+  const [results, setResults]         = useState<FlightResult[]>([]);
+  const [status, setStatus]           = useState<TStatus>("idle");
+  const [logs, setLogs]               = useState<LogEntry[]>([]);
+  const [scanSources, setScanSources] = useState<ScanSource[]>([]);
+  const [scanProgress, setScanProgress] = useState(0);
+  const [lastSearch, setLastSearch]   = useState("");
+  const [sortBy, setSortBy]           = useState("price");
+  const [maxResults, setMaxResults]   = useState(20);
+  const [maxPrice, setMaxPrice]       = useState(1200);
+
+  const abortRef   = useRef<AbortController | null>(null);
+  const scanRef    = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const addLog = useCallback((msg: string, type: LogType = "info") => {
+    setLogs((prev) => [...prev, { ts: ts(), msg, type }]);
+  }, []);
+
+  // Animate scan sources
+  const animateScan = useCallback(
+    (platforms: string[], onDone: () => void) => {
+      const sources: ScanSource[] = platforms.map((k) => ({ name: PLATFORM_LABEL[k] || k, state: "idle" }));
+      setScanSources(sources);
+      setScanProgress(0);
+
+      let i = 0;
+      const step = () => {
+        setScanSources((prev) => {
+          const next = [...prev];
+          if (i > 0) next[i - 1] = { ...next[i - 1], state: "done" };
+          if (i < next.length) next[i] = { ...next[i], state: "scanning" };
+          return next;
+        });
+        setScanProgress(Math.round((i / platforms.length) * 100));
+        if (i < platforms.length) addLog(`Rastreando ${PLATFORM_LABEL[platforms[i]] || platforms[i]}...`, "scan");
+        i++;
+        if (i <= platforms.length) {
+          scanRef.current = setTimeout(step, 400 + Math.random() * 500);
+        } else {
+          setScanProgress(100);
+          setScanSources((prev) => prev.map((s) => ({ ...s, state: "done" })));
+          setTimeout(() => { setScanSources([]); setScanProgress(0); onDone(); }, 500);
+        }
+      };
+      step();
+    },
+    [addLog]
+  );
 
   const handleSearch = useCallback(async (params: SearchParams) => {
-    // Abort any existing search
     abortRef.current?.abort();
-    const controller = new AbortController();
-    abortRef.current = controller;
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
 
     setResults([]);
     setStatus("running");
-    setStatusMsg("Conectando con fuentes de vuelos...");
-    setTotalScans((n) => n + 1);
+    setMaxResults(params.maxResults);
+    setMaxPrice(params.maxPrice);
+    addLog(`Agente iniciado. Ruta: ${params.origin} → ${params.destination}. Máx: USD ${params.maxPrice}`, "ok");
+    addLog(`Plataformas: ${params.platforms.map((k) => PLATFORM_LABEL[k]).filter(Boolean).join(", ")}`, "info");
 
-    try {
-      const res = await fetch("/api/search", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(params),
-        signal: controller.signal,
-      });
+    animateScan(params.platforms, async () => {
+      try {
+        const res = await fetch("/api/search", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(params),
+          signal: ctrl.signal,
+        });
 
-      if (!res.ok || !res.body) throw new Error("Error en la respuesta del servidor");
+        if (!res.ok || !res.body) throw new Error("Error en la respuesta del servidor");
 
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n\n");
+          buffer = lines.pop() || "";
 
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n\n");
-        buffer = lines.pop() || "";
-
-        for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
-          const raw = line.slice(6).trim();
-          if (!raw) continue;
-
-          try {
-            const evt = JSON.parse(raw);
-            if (evt.type === "start") {
-              setStatusMsg(evt.message);
-            } else if (evt.type === "flight") {
-              setResults((prev) => [...prev, evt.flight]);
-              setStatusMsg(`Procesando resultados... ${evt.count} vuelos encontrados`);
-            } else if (evt.type === "done") {
-              setStatus("done");
-              setStatusMsg(`Escaneo completado. ${evt.total} opciones encontradas.`);
-            } else if (evt.type === "error") {
-              setStatus("error");
-              setStatusMsg(`Error: ${evt.message}`);
-            }
-          } catch {
-            // skip malformed events
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            const raw = line.slice(6).trim();
+            if (!raw) continue;
+            try {
+              const evt = JSON.parse(raw);
+              if (evt.type === "start") {
+                addLog(evt.message, "info");
+              } else if (evt.type === "flight") {
+                setResults((prev) => [...prev, evt.flight]);
+                addLog(`+1 vuelo encontrado · USD ${evt.flight.pricePerPerson} · ${evt.flight.airline}`, "ok");
+                setLastSearch(ts());
+              } else if (evt.type === "done") {
+                setStatus("done");
+                addLog(`Escaneo completado. ${evt.total} vuelos encontrados.`, "ok");
+                setLastSearch(ts());
+              } else if (evt.type === "error") {
+                setStatus("error");
+                addLog(`Error: ${evt.message}`, "err");
+              }
+            } catch { /* skip */ }
           }
         }
+      } catch (err: unknown) {
+        if (err instanceof Error && err.name === "AbortError") {
+          setStatus("idle");
+          addLog("Búsqueda detenida por el usuario.", "warn");
+        } else {
+          setStatus("error");
+          addLog(err instanceof Error ? err.message : "Error desconocido", "err");
+        }
       }
-    } catch (err: unknown) {
-      if (err instanceof Error && err.name === "AbortError") {
-        setStatus("idle");
-        setStatusMsg("Búsqueda detenida");
-      } else {
-        setStatus("error");
-        setStatusMsg(err instanceof Error ? err.message : "Error desconocido");
-      }
-    }
-  }, []);
+    });
+  }, [addLog, animateScan]);
 
-  const handleStop = () => {
+  const handleStop = useCallback(() => {
     abortRef.current?.abort();
+    if (scanRef.current) clearTimeout(scanRef.current);
+    setScanSources([]);
+    setScanProgress(0);
     setStatus("idle");
-    setStatusMsg("Agente detenido");
-  };
+    addLog("Agente detenido por el usuario.", "warn");
+  }, [addLog]);
 
-  const sortedResults = [...results].sort((a, b) => a.priceUSD - b.priceUSD);
-  const alertCount = sortedResults.filter((f) => f.isAlert).length;
+  const handleClear = useCallback(() => {
+    setResults([]);
+    setLogs([]);
+    setScanSources([]);
+    setScanProgress(0);
+    addLog("Resultados limpiados.", "warn");
+  }, [addLog]);
+
+  const handleExport = useCallback(() => {
+    if (!results.length) { addLog("No hay resultados para exportar.", "warn"); return; }
+    const rows = [["Aerolínea","Origen","Destino","Salida","Llegada","Duración","Escalas","Fecha","Día","Precio USD","Total USD","Plataforma"]];
+    getSorted(results, sortBy).forEach((f) => {
+      rows.push([f.airline,f.origin,f.destination,f.depTime,f.arrTime,`${f.durH}h${f.durMin}m`,String(f.stops),f.departureDate,f.dayOfWeek,String(f.pricePerPerson),String(f.totalPrice),f.source]);
+    });
+    const csv = rows.map((r) => r.join(",")).join("\n");
+    const a = document.createElement("a");
+    a.href = "data:text/csv;charset=utf-8," + encodeURIComponent(csv);
+    a.download = `vuelos_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    addLog(`Exportados ${results.length} vuelos a CSV.`, "ok");
+  }, [results, sortBy, addLog]);
+
+  const handleAITip = useCallback(async () => {
+    addLog("Consultando análisis IA...", "info");
+    try {
+      const resp = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 600,
+          messages: [{ role: "user", content: "Sos un experto en vuelos desde Argentina. Dame 3 tips ultra-concretos y cortos (max 2 líneas cada uno) para conseguir pasajes baratos a Europa. Formato: 1. tip. 2. tip. 3. tip. Sin preámbulo." }],
+        }),
+      });
+      const data = await resp.json();
+      const txt = data.content?.find((b: { type: string; text?: string }) => b.type === "text")?.text || "Sin respuesta";
+      txt.split(/\n/).filter((l: string) => l.trim()).forEach((line: string) => addLog("🤖 " + line, "ok"));
+    } catch {
+      addLog("Error IA. Tip: Buscá mar/mié, franjas 6-10h y 22-24h en mercados CO/BR.", "warn");
+    }
+  }, [addLog]);
+
+  const sorted = getSorted(results, sortBy).slice(0, maxResults);
+  const bestPrice = results.length ? Math.min(...results.map((f) => f.pricePerPerson)) : null;
+  const activePlatforms = results.length > 0
+    ? [...new Set(results.map((f) => f.source))].length
+    : PLATFORMS.filter((p) => p.defaultOn).length;
 
   return (
-    <main className="min-h-screen radar-grid">
-      {/* Top bar */}
-      <header className="border-b border-dim bg-void/80 backdrop-blur-sm sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <span className="font-mono text-pulse font-bold tracking-widest text-sm">
-              FLIGHT<span className="text-sky">AGENT</span>
-            </span>
-            <span className="tag">v1.0</span>
+    <div style={{ position: "relative", zIndex: 1 }}>
+      {/* ── HEADER ─────────────────────────── */}
+      <header style={{
+        background: "var(--surface)",
+        borderBottom: "1px solid var(--border)",
+        padding: "0 28px",
+        height: 56,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        position: "sticky",
+        top: 0,
+        zIndex: 100,
+      }}>
+        <div style={{ fontFamily: "'Bebas Neue',sans-serif", fontSize: "1.6rem", letterSpacing: "0.08em", color: "var(--accent)", textShadow: "0 0 20px rgba(0,229,255,0.4)" }}>
+          Agente<span style={{ color: "var(--text)" }}>Vuelos</span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 7, fontFamily: "'DM Mono',monospace", fontSize: "0.72rem", letterSpacing: "0.05em", color: "var(--muted2)" }}>
+            <div style={{
+              width: 7, height: 7, borderRadius: "50%",
+              background: status === "running" ? "var(--green)" : "var(--muted)",
+              boxShadow: status === "running" ? "0 0 8px var(--green)" : "none",
+              animation: status === "running" ? "blink 1s infinite" : "none",
+              transition: "background 0.3s",
+            }} />
+            <span>{status === "running" ? "RASTREANDO" : "INACTIVO"}</span>
           </div>
-          <div className="flex items-center gap-4 text-xs font-mono text-muted">
-            <span>
-              resultados:{" "}
-              <span className="text-text">{results.length}</span>
-            </span>
-            {alertCount > 0 && (
-              <span className="text-pulse glow-text">
-                {alertCount} en rango ✓
-              </span>
-            )}
-          </div>
+          <div style={{ fontFamily: "'DM Mono',monospace", fontSize: "0.65rem", color: "var(--muted)", letterSpacing: "0.1em" }}>v2.0 · AGENTE</div>
         </div>
       </header>
 
-      <div className="max-w-7xl mx-auto px-4 py-6 grid grid-cols-1 lg:grid-cols-[380px_1fr] gap-6">
-        {/* LEFT: form panel */}
-        <aside className="space-y-4">
-          {/* Panel title */}
-          <div>
-            <h1 className="font-display text-2xl font-bold text-text leading-tight">
-              Agente de<br />
-              <span className="text-pulse">Vuelos Baratos</span>
-            </h1>
-            <p className="text-xs text-muted mt-1 font-body">
-              Escaneo automático · Múltiples mercados · Estrategias pro
-            </p>
-          </div>
+      {/* ── BODY ─────────────────────────── */}
+      <div style={{ display: "flex", minHeight: "calc(100vh - 56px)" }}>
 
-          <div className="border border-dim rounded-lg bg-radar/30 p-5 backdrop-blur-sm">
-            <SearchForm
-              onSearch={handleSearch}
-              isSearching={status === "running"}
-              onStop={handleStop}
-            />
-          </div>
+        {/* LEFT */}
+        <SearchForm
+          onSearch={handleSearch}
+          onStop={handleStop}
+          onClear={handleClear}
+          onExport={handleExport}
+          onAITip={handleAITip}
+          isSearching={status === "running"}
+        />
 
-          {/* Tips box */}
-          <div className="border border-dim/50 rounded bg-void/50 p-4 text-xs text-muted space-y-1.5 font-body">
-            <div className="text-pulse font-mono text-[10px] uppercase tracking-wider mb-2">// Consejos del agente</div>
-            <p>🌍 Mercados CO/BR/CL suelen tener 10–20% de descuento en tarifas regionales.</p>
-            <p>🕒 Las mejores ofertas duran pocas horas. Configurá alertas a las 2AM y 6AM.</p>
-            <p>🔁 Open Jaw puede salir más barato que ida/vuelta al mismo aeropuerto.</p>
-            <p>✈️ Si el precio normal es USD 1400 y aparece a USD 780, no esperés más.</p>
-          </div>
-        </aside>
+        {/* RIGHT */}
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", background: "var(--bg)", minHeight: "calc(100vh - 56px)", overflow: "hidden" }}>
 
-        {/* RIGHT: results panel */}
-        <section className="space-y-4">
           <AgentStatus
             status={status}
-            count={results.length}
-            message={statusMsg}
-            totalScans={totalScans}
+            logs={logs}
+            scanSources={scanSources}
+            scanProgress={scanProgress}
+            flightCount={sorted.length}
+            bestPrice={bestPrice}
+            platformCount={activePlatforms}
+            lastSearch={lastSearch}
+            sortBy={sortBy}
+            onSortChange={setSortBy}
           />
 
-          {/* Results */}
-          {results.length === 0 && status === "idle" && (
-            <div className="border border-dim/40 rounded-lg bg-radar/10 flex flex-col items-center justify-center py-24 text-center">
-              <div className="text-4xl mb-4 opacity-20">✈</div>
-              <p className="font-mono text-muted text-sm">
-                Sin resultados todavía
-              </p>
-              <p className="text-xs text-muted/60 mt-1">
-                Configurá los parámetros y lanzá el agente
-              </p>
-            </div>
-          )}
+          {/* Flight list */}
+          <div style={{ flex: 1, padding: "20px 24px", display: "flex", flexDirection: "column", gap: 10, overflowY: "auto" }}>
 
-          {results.length === 0 && status === "running" && (
-            <div className="border border-pulse/20 rounded-lg bg-radar/10 flex flex-col items-center justify-center py-24 text-center">
-              <div className="text-4xl mb-4 animate-bounce opacity-60">🔍</div>
-              <p className="font-mono text-pulse text-sm animate-pulse">
-                Escaneando fuentes...
-              </p>
-              <p className="text-xs text-muted mt-1">
-                Google Flights · Skyscanner · Kiwi · Kayak · Momondo
-              </p>
-            </div>
-          )}
+            {results.length === 0 && status === "idle" && <IdleState />}
+            {results.length === 0 && status === "running" && <SearchingState />}
 
-          {/* Flight cards */}
-          <div className="space-y-3">
-            {sortedResults.map((flight, i) => (
-              <FlightCard key={flight.id} flight={flight} index={i} />
+            {sorted.map((f, i) => (
+              <FlightCard key={f.id} flight={f} rank={i} maxPrice={maxPrice} />
             ))}
-          </div>
 
-          {/* Summary when done */}
-          {status === "done" && results.length > 0 && (
-            <div className="border border-sky/20 rounded bg-sky/5 p-4 text-sm text-muted font-body">
-              <span className="text-sky font-mono text-xs">// RESUMEN</span>
-              <div className="mt-2 grid grid-cols-3 gap-4 text-center">
-                <div>
-                  <div className="text-xl font-display font-bold text-text">
-                    {results.length}
-                  </div>
-                  <div className="text-xs text-muted">vuelos encontrados</div>
+            {status === "done" && results.length > 0 && (
+              <div style={{
+                border: "1px solid rgba(0,229,255,0.2)", borderRadius: "var(--radius)",
+                background: "rgba(0,229,255,0.04)", padding: 16,
+              }}>
+                <div style={{ fontFamily: "'DM Mono',monospace", fontSize: "0.65rem", color: "var(--accent)", letterSpacing: "0.1em", marginBottom: 12 }}>
+                  // RESUMEN
                 </div>
-                <div>
-                  <div className="text-xl font-display font-bold text-pulse">
-                    {alertCount}
-                  </div>
-                  <div className="text-xs text-muted">en tu rango</div>
-                </div>
-                <div>
-                  <div className="text-xl font-display font-bold text-text">
-                    USD {Math.min(...results.map((r) => r.priceUSD)).toLocaleString()}
-                  </div>
-                  <div className="text-xs text-muted">precio más bajo</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, textAlign: "center" }}>
+                  <SummaryItem value={String(results.length)} label="vuelos encontrados" />
+                  <SummaryItem value={String(results.filter((r) => r.isAlert).length)} label="en tu rango" accent="var(--green)" />
+                  <SummaryItem value={bestPrice ? `USD ${bestPrice.toLocaleString()}` : "—"} label="precio más bajo" />
                 </div>
               </div>
-            </div>
-          )}
-        </section>
+            )}
+          </div>
+        </div>
       </div>
-    </main>
+
+      {/* CSS for animations */}
+      <style>{`
+        @keyframes blink { 50% { opacity: 0.4; } }
+        @keyframes float { 0%,100% { transform:translateY(0); } 50% { transform:translateY(-10px); } }
+        @keyframes sdotBlink { 50% { opacity: 0.3; } }
+      `}</style>
+    </div>
+  );
+}
+
+function getSorted(flights: FlightResult[], by: string): FlightResult[] {
+  return [...flights].sort((a, b) => {
+    if (by === "price")     return a.pricePerPerson - b.pricePerPerson;
+    if (by === "duration")  return a.durH * 60 + a.durMin - (b.durH * 60 + b.durMin);
+    if (by === "departure") {
+      const ta = a.depTime.replace(":", ""); const tb = b.depTime.replace(":", "");
+      return parseInt(ta) - parseInt(tb);
+    }
+    if (by === "stops") return a.stops - b.stops;
+    return a.pricePerPerson - b.pricePerPerson;
+  });
+}
+
+function IdleState() {
+  return (
+    <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "60px 40px", textAlign: "center", gap: 16 }}>
+      <div style={{ fontSize: "3.5rem", opacity: 0.3, animation: "float 3s ease-in-out infinite" }}>🛫</div>
+      <div style={{ fontFamily: "'DM Mono',monospace", fontSize: "0.85rem", color: "var(--muted2)", letterSpacing: "0.08em" }}>AGENTE EN ESPERA</div>
+      <div style={{ fontSize: "0.78rem", color: "var(--muted)", maxWidth: 380, lineHeight: 1.7 }}>
+        Configurá los parámetros en el panel izquierdo y presioná &quot;Iniciar Agente&quot;. Los vuelos van a aparecer acá a medida que se vayan encontrando.
+      </div>
+    </div>
+  );
+}
+
+function SearchingState() {
+  return (
+    <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "60px 40px", textAlign: "center", gap: 16 }}>
+      <div style={{ fontSize: "3.5rem", animation: "float 1.5s ease-in-out infinite" }}>🔍</div>
+      <div style={{ fontFamily: "'DM Mono',monospace", fontSize: "0.85rem", color: "var(--accent)", letterSpacing: "0.08em" }}>BUSCANDO...</div>
+      <div style={{ fontSize: "0.78rem", color: "var(--muted)", maxWidth: 380, lineHeight: 1.7 }}>
+        El agente está rastreando las plataformas. Los resultados aparecerán en segundos.
+      </div>
+    </div>
+  );
+}
+
+function SummaryItem({ value, label, accent }: { value: string; label: string; accent?: string }) {
+  return (
+    <div>
+      <div style={{ fontFamily: "'Bebas Neue',sans-serif", fontSize: "1.8rem", color: accent || "var(--text)" }}>{value}</div>
+      <div style={{ fontSize: "0.72rem", color: "var(--muted)", fontFamily: "'DM Mono',monospace" }}>{label}</div>
+    </div>
   );
 }

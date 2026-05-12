@@ -8,7 +8,6 @@ export const maxDuration = 60;
 export async function POST(req: NextRequest) {
   const params: SearchParams = await req.json();
 
-  // Validate
   if (!params.origin || !params.destination || !params.startDate) {
     return new Response(JSON.stringify({ error: "Parámetros incompletos" }), {
       status: 400,
@@ -18,32 +17,28 @@ export async function POST(req: NextRequest) {
 
   const encoder = new TextEncoder();
 
-  // Streaming response using Server-Sent Events
   const stream = new ReadableStream({
     async start(controller) {
-      const sendEvent = (data: object) => {
-        const chunk = `data: ${JSON.stringify(data)}\n\n`;
-        controller.enqueue(encoder.encode(chunk));
+      const send = (data: object) => {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
       };
 
-      sendEvent({ type: "start", message: "Iniciando agente de búsqueda..." });
+      send({ type: "start", message: `Iniciando agente · ${params.origin} → ${params.destination}` });
 
       try {
         let found = 0;
-
         await runFlightAgent(
           params,
           (flight: FlightResult) => {
             found++;
-            sendEvent({ type: "flight", flight, count: found });
+            send({ type: "flight", flight, count: found });
           },
           req.signal
         );
-
-        sendEvent({ type: "done", total: found });
+        send({ type: "done", total: found });
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Error desconocido";
-        sendEvent({ type: "error", message: msg });
+        send({ type: "error", message: msg });
       } finally {
         controller.close();
       }
