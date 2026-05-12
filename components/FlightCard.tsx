@@ -2,104 +2,142 @@
 
 import type { FlightResult } from "@/lib/types";
 
-const STRATEGY_LABELS: Record<string, { label: string; color: string }> = {
-  "hidden-city": { label: "HIDDEN CITY", color: "tag-red" },
-  openjaw: { label: "OPEN JAW", color: "tag-blue" },
-  "nearby-airport": { label: "AEROP. VECINO", color: "tag" },
-  "alternative-market": { label: "MERCADO ALT.", color: "tag" },
-  direct: { label: "DIRECTO", color: "tag-blue" },
-};
-
 interface Props {
   flight: FlightResult;
-  index: number;
+  rank: number;
+  maxPrice: number;
 }
 
-export default function FlightCard({ flight, index }: Props) {
-  const strategy = flight.strategy ? STRATEGY_LABELS[flight.strategy] : null;
-  const time = new Date(flight.foundAt).toLocaleTimeString("es-AR", {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
+const STRATEGY_LABELS: Record<string, string> = {
+  "hidden-city":        "HIDDEN CITY",
+  "openjaw":            "OPEN JAW",
+  "nearby-airport":     "AEROP. VECINO",
+  "alternative-market": "MERCADO ALT.",
+  "direct":             "DIRECTO",
+  "error-fares":        "ERROR FARE",
+};
 
-  const stopsLabel =
-    flight.stops === 0 ? "Directo" : flight.stops === 1 ? "1 escala" : `${flight.stops} escalas`;
+export default function FlightCard({ flight, rank, maxPrice }: Props) {
+  const cardClass = rank === 0 ? "flight-card best" : flight.pricePerPerson < maxPrice * 0.8 ? "flight-card deal" : "flight-card";
+  const durStr = `${flight.durH}h ${String(flight.durMin).padStart(2, "0")}m`;
+  const pax = flight.totalPrice !== flight.pricePerPerson ? ` · Total: $${flight.totalPrice.toLocaleString()}` : "";
 
   return (
-    <div
-      className="flight-card-enter border border-dim border-l-2 border-l-pulse bg-radar/50 rounded-r p-4 hover:bg-radar transition-colors"
-      style={{ animationDelay: `${index * 60}ms` }}
-    >
-      <div className="flex items-start justify-between gap-4">
-        {/* Left: route info */}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-2 flex-wrap">
-            <span className="font-display text-base font-bold text-text">
-              {flight.origin}
-            </span>
-            <span className="text-muted font-mono text-xs">──→</span>
-            <span className="font-display text-base font-bold text-text">
-              {flight.destination}
-            </span>
-            {flight.isAlert && (
-              <span className="tag">✓ EN RANGO</span>
-            )}
-            {strategy && (
-              <span className={`tag ${strategy.color}`}>{strategy.label}</span>
-            )}
-          </div>
+    <div className={cardClass} style={{ animationDelay: `${Math.min(rank * 0.06, 0.5)}s` }}>
+      {/* Badge */}
+      {rank === 0 && <Badge color="var(--green)">★ MEJOR PRECIO</Badge>}
+      {rank !== 0 && flight.pricePerPerson < maxPrice * 0.75 && <Badge color="var(--gold)">💰 OFERTA</Badge>}
+      {rank > 0 && rank < 3 && flight.pricePerPerson >= maxPrice * 0.75 && <Badge color="var(--accent)">NUEVO</Badge>}
 
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
-            <span className="font-mono">{flight.departureDate}</span>
-            <span>•</span>
-            <span>{flight.airline}</span>
-            <span>•</span>
-            <span>{stopsLabel}</span>
-            <span>•</span>
-            <span>{flight.duration}</span>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2 text-xs text-muted">
-            <span className="font-mono">
-              via <span className="text-sky">{flight.source}</span>
-            </span>
-            {flight.market && (
-              <span className="font-mono">
-                mercado <span className="text-sky">{flight.market}</span>
-              </span>
-            )}
-            <span className="font-mono text-void/50 text-[10px]">
-              encontrado {time}
-            </span>
-          </div>
+      {/* Card body */}
+      <div style={{ padding: rank === 0 || flight.pricePerPerson < maxPrice * 0.75 ? "28px 20px 16px" : "18px 20px 16px" }}>
+        {/* Airline row */}
+        <div style={{ fontSize: "0.78rem", fontWeight: 600, color: "var(--muted2)", marginBottom: 10, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <span>{flight.airline}</span>
+          <Tag>{flight.origin} → {flight.destination}</Tag>
+          <Tag>{flight.dayOfWeek}</Tag>
+          {flight.departureDate && <Tag>{flight.departureDate}</Tag>}
         </div>
 
-        {/* Right: price + CTA */}
-        <div className="flex flex-col items-end gap-2 flex-shrink-0">
-          <div className="text-right">
-            <div className={`font-display font-bold text-xl ${flight.isAlert ? "text-pulse glow-text" : "text-text"}`}>
-              USD {flight.priceUSD.toLocaleString()}
+        {/* Route */}
+        <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 12 }}>
+          <Airport code={flight.origin} time={flight.depTime} />
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+            <div style={{ width: "100%", height: 1, background: "linear-gradient(to right, var(--border2), var(--muted), var(--border2))", position: "relative" }}>
+              <span style={{ fontSize: "0.75rem", position: "absolute", top: -9, left: "50%", transform: "translateX(-50%)", background: "var(--surface)", padding: "0 4px" }}>✈️</span>
             </div>
-            {flight.price !== flight.priceUSD && (
-              <div className="text-xs text-muted font-mono">
-                {flight.currency} {flight.price.toLocaleString()}
-              </div>
-            )}
+            <div style={{ fontFamily: "'DM Mono',monospace", fontSize: "0.68rem", color: "var(--muted)", textAlign: "center" }}>{durStr}</div>
           </div>
-          <a
-            href={flight.bookingUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className={`px-4 py-2 rounded text-xs font-mono font-bold transition-all ${
-              flight.isAlert
-                ? "bg-pulse text-void hover:bg-pulse/90 shadow-[0_0_12px_rgba(15,240,179,0.3)]"
-                : "border border-dim text-muted hover:border-pulse hover:text-pulse"
-            }`}
-          >
-            VER VUELO →
-          </a>
+          <Airport code={flight.destination} time={`${flight.arrTime}${flight.durH > 12 ? "+1" : ""}`} />
         </div>
+
+        {/* Tags */}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+          {flight.stops === 0
+            ? <span className="ctag ctag-direct">✓ DIRECTO</span>
+            : <span className="ctag ctag-stop">{flight.stops} ESCALA{flight.stops > 1 ? "S" : ""}{flight.stopCity ? ` · ${flight.stopCity}` : ""}</span>
+          }
+          {flight.isNight && <span className="ctag ctag-night">🌙 NOCTURNO</span>}
+          {flight.isCheapDay && <span className="ctag ctag-cheap">📅 DÍA ECONÓMICO</span>}
+          {flight.strategy && flight.strategy !== "direct" && (
+            <span className="ctag ctag-strategy">{STRATEGY_LABELS[flight.strategy] || flight.strategy.toUpperCase()}</span>
+          )}
+          {flight.market && flight.market !== "AR" && (
+            <span className="ctag ctag-market">🌐 MERCADO {flight.market}</span>
+          )}
+          <span className="ctag ctag-source">vía {flight.source}</span>
+        </div>
+      </div>
+
+      {/* Price block */}
+      <div style={{
+        background: "var(--surface2)",
+        borderLeft: "1px solid var(--border)",
+        padding: "20px 22px",
+        display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+        gap: 12, minWidth: 170, textAlign: "center",
+      }}>
+        <div style={{ fontFamily: "'DM Mono',monospace", fontSize: "0.62rem", color: "var(--muted)", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+          DESDE / PERSONA
+        </div>
+        <div style={{ fontFamily: "'Bebas Neue',sans-serif", fontSize: "2.4rem", lineHeight: 1, color: "var(--gold)", letterSpacing: "0.02em" }}>
+          ${flight.pricePerPerson.toLocaleString()}
+        </div>
+        <div style={{ fontFamily: "'DM Mono',monospace", fontSize: "0.68rem", color: "var(--muted)" }}>
+          USD{pax}
+        </div>
+        <a
+          href={flight.bookingUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+            width: "100%", background: "var(--accent)", color: "var(--bg)",
+            fontFamily: "'DM Mono',monospace", fontSize: "0.72rem", fontWeight: 700,
+            letterSpacing: "0.08em", textTransform: "uppercase",
+            padding: "10px 14px", border: "none", borderRadius: "var(--radius)",
+            cursor: "pointer", textDecoration: "none", transition: "all 0.15s",
+          }}
+          onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.background = "#00ccee"; }}
+          onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.background = "var(--accent)"; }}
+        >
+          Comprar ↗️
+        </a>
+      </div>
+    </div>
+  );
+}
+
+function Badge({ children, color }: { children: React.ReactNode; color: string }) {
+  return (
+    <div style={{
+      position: "absolute", top: 0, left: 0,
+      fontFamily: "'DM Mono',monospace", fontSize: "0.6rem", fontWeight: 700,
+      letterSpacing: "0.1em", padding: "3px 10px",
+      borderBottomRightRadius: "var(--radius)",
+      background: color, color: color === "var(--accent)" ? "#000" : "#000",
+    }}>{children}</div>
+  );
+}
+
+function Tag({ children }: { children: React.ReactNode }) {
+  return (
+    <span style={{
+      fontFamily: "'DM Mono',monospace", fontSize: "0.65rem",
+      padding: "2px 7px", borderRadius: 3,
+      border: "1px solid var(--border2)", color: "var(--muted)",
+    }}>{children}</span>
+  );
+}
+
+function Airport({ code, time }: { code: string; time: string }) {
+  return (
+    <div style={{ textAlign: "center" }}>
+      <div style={{ fontFamily: "'Bebas Neue',sans-serif", fontSize: "1.9rem", color: "var(--text)", lineHeight: 1, letterSpacing: "0.05em" }}>
+        {code}
+      </div>
+      <div style={{ fontFamily: "'DM Mono',monospace", fontSize: "0.8rem", color: "var(--muted2)", marginTop: 2 }}>
+        {time}
       </div>
     </div>
   );
