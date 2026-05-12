@@ -1,107 +1,79 @@
 import type { SearchParams } from "./types";
 
-export const SOURCES = [
-  {
-    name: "Google Flights",
-    key: "google",
-    baseUrl: "https://www.google.com/travel/flights",
-    markets: ["AR", "US", "CO", "BR", "CL", "ES"],
-  },
-  {
-    name: "Skyscanner",
-    key: "skyscanner",
-    baseUrl: "https://www.skyscanner.com",
-    markets: ["AR", "US", "CO", "BR", "CL", "ES"],
-  },
-  {
-    name: "Momondo",
-    key: "momondo",
-    baseUrl: "https://www.momondo.com",
-    markets: ["US", "CO", "BR", "CL"],
-  },
-  {
-    name: "Kayak",
-    key: "kayak",
-    baseUrl: "https://www.kayak.com",
-    markets: ["US", "CO", "BR"],
-  },
-  {
-    name: "Kiwi",
-    key: "kiwi",
-    baseUrl: "https://www.kiwi.com",
-    markets: ["AR", "US", "CO", "BR", "CL", "ES"],
-  },
-  {
-    name: "Turismocity",
-    key: "turismocity",
-    baseUrl: "https://www.turismocity.com.ar",
-    markets: ["AR"],
-  },
-];
-
 export const IATA_CODES: Record<string, string> = {
-  "Córdoba": "COR",
-  "Buenos Aires": "EZE",
-  "Madrid": "MAD",
-  "Barcelona": "BCN",
-  "Roma": "FCO",
-  "París": "CDG",
-  "Lisboa": "LIS",
-  "Milán": "MXP",
-  "Amsterdam": "AMS",
-  "Londres": "LHR",
-  "Santiago": "SCL",
-  "Lima": "LIM",
-  "Bogotá": "BOG",
-  "Miami": "MIA",
-  "New York": "JFK",
+  COR: "Córdoba",
+  EZE: "Buenos Aires (Ezeiza)",
+  AEP: "Buenos Aires (Aeroparque)",
+  ROS: "Rosario",
+  MDZ: "Mendoza",
+  MAD: "Madrid",
+  BCN: "Barcelona",
+  LHR: "Londres",
+  CDG: "París",
+  FCO: "Roma",
+  AMS: "Ámsterdam",
+  LIS: "Lisboa",
+  MXP: "Milán",
+  ANY_ESP: "España (cualquiera)",
 };
 
-export function buildGoogleFlightsUrl(params: SearchParams): string {
-  const orig = IATA_CODES[params.origin] || params.origin;
-  const dest = IATA_CODES[params.destination] || params.destination;
-  return `https://www.google.com/travel/flights/search?tfs=CBwQAhooagcIARIDQ09SEgoyMDI1LTA5LTAxcg8IARILagcIARIDTUFE&curr=USD&hl=es`;
-}
+export const ORIGINS = [
+  { code: "COR", label: "Córdoba (COR)" },
+  { code: "EZE", label: "Bs.As. Ezeiza (EZE)" },
+  { code: "AEP", label: "Bs.As. Aeroparque (AEP)" },
+  { code: "ROS", label: "Rosario (ROS)" },
+  { code: "MDZ", label: "Mendoza (MDZ)" },
+];
 
-export function buildSkyscannerUrl(params: SearchParams, market = "AR"): string {
-  const orig = IATA_CODES[params.origin] || params.origin;
-  const dest = IATA_CODES[params.destination] || params.destination;
-  const locale = market === "AR" ? "es-AR" : market === "CO" ? "es-CO" : "en-US";
-  const currency = market === "AR" ? "USD" : "USD";
-  return `https://www.skyscanner.com.ar/transporte/vuelos/${orig}/${dest}/${params.startDate.replace(/-/g, "")}/?adults=${params.passengers}&currency=${currency}`;
-}
+export const DESTINATIONS = [
+  { group: "España", options: [
+    { code: "MAD", label: "Madrid (MAD)" },
+    { code: "BCN", label: "Barcelona (BCN)" },
+    { code: "ANY_ESP", label: "Cualquiera en España" },
+  ]},
+  { group: "Europa", options: [
+    { code: "LHR", label: "Londres (LHR)" },
+    { code: "CDG", label: "París (CDG)" },
+    { code: "FCO", label: "Roma (FCO)" },
+    { code: "AMS", label: "Ámsterdam (AMS)" },
+    { code: "LIS", label: "Lisboa (LIS)" },
+  ]},
+];
 
-export function buildKiwiUrl(params: SearchParams): string {
-  const orig = IATA_CODES[params.origin] || params.origin;
-  const dest = IATA_CODES[params.destination] || params.destination;
-  return `https://www.kiwi.com/es/search/results/${encodeURIComponent(params.origin)}/${encodeURIComponent(params.destination)}/${params.startDate}/${params.endDate || params.startDate}?adults=${params.passengers}&currency=USD`;
-}
+export const PLATFORMS = [
+  { key: "google",      label: "Google Flights", defaultOn: true },
+  { key: "skyscanner",  label: "Skyscanner",     defaultOn: true },
+  { key: "despegar",    label: "Despegar",        defaultOn: true },
+  { key: "turismocity", label: "Turismocity",     defaultOn: true },
+  { key: "kayak",       label: "Kayak",           defaultOn: true },
+  { key: "latam",       label: "LATAM directo",   defaultOn: true },
+  { key: "iberia",      label: "Iberia directo",  defaultOn: true },
+  { key: "aireuropa",   label: "Air Europa",      defaultOn: false },
+];
 
-export function buildMomondoUrl(params: SearchParams): string {
-  const orig = IATA_CODES[params.origin] || params.origin;
-  const dest = IATA_CODES[params.destination] || params.destination;
-  return `https://www.momondo.com/flight-search/${orig}-${dest}/${params.startDate}?adults=${params.passengers}&currency=USD`;
-}
+export const PLATFORM_LABEL: Record<string, string> = Object.fromEntries(
+  PLATFORMS.map((p) => [p.key, p.label])
+);
 
-export function buildKayakUrl(params: SearchParams): string {
-  const orig = IATA_CODES[params.origin] || params.origin;
-  const dest = IATA_CODES[params.destination] || params.destination;
-  return `https://www.kayak.com/flights/${orig}-${dest}/${params.startDate}?adults=${params.passengers}&currency=USD`;
-}
-
-export function buildSkippedUrl(params: SearchParams): string {
-  const orig = IATA_CODES[params.origin] || params.origin;
-  const dest = IATA_CODES[params.destination] || params.destination;
-  return `https://skiplagged.com/flights/${orig}/${dest}/${params.startDate}`;
+export function buildBookingUrl(source: string, origin: string, destination: string): string {
+  const dest = destination === "ANY_ESP" ? "MAD" : destination;
+  const o = origin.toLowerCase();
+  const d = dest.toLowerCase();
+  const map: Record<string, string> = {
+    "Google Flights": `https://www.google.com/travel/flights/search?tfs=CBwQAhooagcIARID${origin}cgcIARID${dest}&curr=USD`,
+    "Skyscanner":     `https://www.skyscanner.com.ar/vuelos/${o}/${d}/`,
+    "Despegar":       `https://www.despegar.com/vuelos/${origin}-${dest}/`,
+    "Turismocity":    `https://www.turismocity.com.ar/vuelos/buscar?origin=${origin}&destination=${dest}`,
+    "Kayak":          `https://www.kayak.com.ar/flights/${origin}-${dest}/`,
+    "LATAM directo":  `https://www.latamairlines.com/ar/es/oferta-vuelos?origin=${origin}&destination=${dest}`,
+    "Iberia directo": `https://www.iberia.com/vuelos/${o}-${d}/`,
+    "Air Europa":     `https://www.aireuropa.com/es/vuelos`,
+  };
+  return map[source] || map["Skyscanner"];
 }
 
 export function getAllBookingUrls(params: SearchParams): Record<string, string> {
-  return {
-    google: buildGoogleFlightsUrl(params),
-    skyscanner: buildSkyscannerUrl(params),
-    kiwi: buildKiwiUrl(params),
-    momondo: buildMomondoUrl(params),
-    kayak: buildKayakUrl(params),
-    skiplagged: buildSkippedUrl(params),
-  };
+  return Object.fromEntries(
+    PLATFORMS.map((p) => [p.key, buildBookingUrl(p.label, params.origin, params.destination)])
+  );
 }

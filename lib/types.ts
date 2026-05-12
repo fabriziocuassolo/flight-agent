@@ -1,53 +1,63 @@
 export interface SearchParams {
-  origin: string;
-  destination: string;
+  origin: string;           // IATA code e.g. "COR"
+  destination: string;      // IATA code or "ANY_ESP"
   startDate: string;
   endDate: string;
-  passengers: number;
+  adults: number;
+  children: number;
+  infants: number;
+  cabinClass: "economy" | "premium" | "business";
   minPrice: number;
   maxPrice: number;
-  currency: string;
-  searchCheapest: boolean;
-  checkInterval: number; // minutes
-  searchHours: string[]; // e.g. ["02:00", "06:00", "14:00"]
-  countries: string[]; // markets to search (AR, US, CO, BR, CL, ES)
-  strategies: string[]; // hidden-city, openjaw, nearby-airports, error-fares
+  stops: "any" | "0" | "1" | "2";
+  tripLength: "any" | "7" | "10" | "14" | "21" | "30";
+  preferredDays: string[];       // ["MAR","MIÉ","JUE"] etc.
+  preferredSlots: string[];      // ["madrugada","mañana","noche"]
+  timeFrom: string;              // "00:00"
+  timeTo: string;                // "23:59"
+  platforms: string[];           // ["google","skyscanner","despegar",...]
+  findCheapest: boolean;
+  priceAlert: boolean;
+  checkInterval: number;
+  maxResults: number;
+  autoSort: boolean;
+  countries: string[];
+  strategies: string[];
 }
 
 export interface FlightResult {
   id: string;
   origin: string;
   destination: string;
-  departureDate: string;
-  returnDate?: string;
   airline: string;
+  departureDate: string;
+  depTime: string;
+  arrTime: string;
+  durH: number;
+  durMin: number;
   stops: number;
-  duration: string;
-  price: number;
+  stopCity?: string;
+  dayOfWeek: string;
+  pricePerPerson: number;
+  totalPrice: number;
   currency: string;
   priceUSD: number;
-  source: string; // "Google Flights", "Skyscanner", etc.
+  source: string;
   bookingUrl: string;
-  foundAt: string; // ISO timestamp
-  strategy?: string; // "hidden-city", "openjaw", etc.
-  isAlert?: boolean; // price below target
-  market?: string; // country code of the market it was found in
+  foundAt: string;
+  strategy?: string;
+  market?: string;
+  isAlert: boolean;
+  isNight: boolean;
+  isCheapDay: boolean;
 }
 
-export interface SearchSession {
-  id: string;
-  params: SearchParams;
-  status: "idle" | "running" | "paused" | "stopped";
-  results: FlightResult[];
-  lastChecked?: string;
-  nextCheck?: string;
-  totalScans: number;
-  startedAt?: string;
-}
+export type AgentStatus = "idle" | "running" | "done" | "error";
 
-export type Source = {
-  name: string;
-  url: string;
-  countries: string[];
-  strategies: string[];
-};
+export type LogType = "ok" | "warn" | "err" | "info" | "scan";
+
+export interface LogEntry {
+  ts: string;
+  msg: string;
+  type: LogType;
+}
